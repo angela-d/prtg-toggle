@@ -10,7 +10,7 @@ Alert manually cleared by an Admin:
 ![Sensor Cleared](img/sensor-cleared.png)
 
 ## Requirements
-- Linux-based distro (Debian/Ubuntu/CentOS, etc)
+- GNU/Linux-based distro (Debian/Ubuntu/CentOS, etc) - may work in others, but only tested in a Linux environment
 - Python 3 (3.5.3+)
 - Pip3 (pre-installed on most distros)
 
@@ -113,7 +113,7 @@ prtg-toggle --clear
 ```
 
 **Run the script**
-Run this when your extraction log resets
+Run this to start analyzing the extracted log (also is triggered by specifying no arguments)
 ```bash
 prtg-toggle --start
 ```
