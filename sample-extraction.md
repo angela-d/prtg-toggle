@@ -26,6 +26,8 @@ If you will be sending mail, you'll want a local mailserver (or modify the mailx
 The default behavior is to reset the process flow at 7pm (when the logs rotate on this example system).  
 - To track behavior other than **POST** or **payments**, modify the regex in the **payments()** function.
 - Modify the **admins()** function and specify the IP you don't wish to track.
+- If you want to obtain remote logs from a different server (not local, where PRTG Toggle is running) - You could utilize something like **ssh-agent** to login with an SSH key and snag what you want; for an example script, see: [db-backup-cron](https://github.com/angela-d/brain-dump/blob/master/sysadmin/crons/db-backup-cron.sh) or alternatively use SCP and adjust the config accordingly.
+
 
 If you decide to use this script in your production environment, you'll want to modify:
 - **utcCleanup()** and adjust the hour your log rotates.  (Or comment out the function contents to completely disable the process flow rotation.)
