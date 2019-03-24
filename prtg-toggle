@@ -1,0 +1,210 @@
+#!/usr/bin/env python3
+# if your python3 location is elsewhere, run: whereis python3 via cli & edit the line accordingly
+
+# webhook data is obtained from the add sensor -> custom push beta sensor
+""" Analyze a log file for specific behavior and send a webhook to PRTG to alert of such. """
+
+import argparse
+from datetime import datetime
+import dataset
+from stuf import stuf
+
+# start config
+URL = 'https://prtg.yoursite.local'
+PORT = '5051'
+TOKEN = 'ABC12345-A1CC-789A-9C1A2-ABC123DEF456GH'
+LOG = '/tmp/payments.log'                # absolute path
+DATABASE = '/home/your_user/visits'      # python will create it; must be absolute
+CHANNEL_NAME = 'Threshold'               # PRTG will create it
+# end config
+
+def toggle(channel, total, ip_address, page, message):
+
+    """ Initialize the alert toggle """
+
+    # do a push
+    import json
+    import requests
+    import urllib3
+
+    if message == 'error':
+        text = "IP: " + str(ip_address) + " with " + str(total) + " hits: " + page
+    else:
+        text = "OK/Last alert cleared by Admin"
+
+    # ignore InsecureRequestWarning
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+    prtg_url = URL + ':' + PORT + '/' + TOKEN
+
+    # target channel
+    payload = {
+        "prtg": {
+            "result": [
+                {
+                    "channel": channel,
+                    "value": total
+                }
+            ],
+            "text": text
+        }
+    }
+
+    header = {'content-type': 'application/json'}
+
+    # post the data to prtg
+    response = requests.post(
+        prtg_url,
+        data=json.dumps(payload),
+        headers=header,
+        verify=False # disable self-signed warnings
+    )
+
+    # if we get a 200 from prtg, update the last hook date
+    print("API response: {}".format(response.status_code))
+
+
+    if response.status_code == 200:
+        if hook_check() == 'false':
+            LAST_HOOK.insert(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
+        else:
+            LAST_HOOK.update(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
+
+    # this isn't a loop, but because it's called in one, it will continue if we don't break out
+    # of it; we only need 1 notification, since we're using this function as a toggle.
+    # we also aren't doing anything after this, so the entire process can terminate
+    exit(0)
+
+def analyze_log():
+
+    """ Read the specified log and extract data from it. """
+
+    latest_record = PRIOR_VISIT.find_one(order_by=['-visited', '-visited'])
+
+    # we assess the date on a variable and if this is a fresh run, the db won't
+    # exist; so do a conditional check and assign a false var if query is null
+    if latest_record is not None:
+        latest = latest_record['visited']
+    else:
+        latest = 'false'
+
+    # open the log in read mode
+    read_log = open(LOG, mode='r')
+
+    # extract the useful data
+    for line in read_log:
+
+        # the original log utilizes dates like [DD-mmm-YYY:HH:MM:SS]; the leading [
+        # doesn't get removed with line.split
+        date_str = line.split(" ")[3]
+
+        # double-check the prefix is [ and snip if so
+        if date_str.startswith("["):
+            date_str = date_str[1:]
+
+        # split the lines based on a space
+        ip_address = line.split(" ")[0]
+        visit = datetime.strptime(date_str, '%d/%b/%Y:%H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
+        page_accessed = line.split(" ")[6]
+
+        # save visit to db
+        compare_date(latest, visit, ip_address, page_accessed)
+
+    # when done, close the connection
+    read_log.close()
+
+    # prepare data for prtg
+    calc_visit()
+
+
+def compare_date(latest, current, ip_address, page_accessed):
+
+    """ Assess whether or not this record has been recorded already. """
+
+    if latest == 'false' or current > latest:
+        PRIOR_VISIT.insert(dict(ip=ip_address, visited=current, page=page_accessed))
+
+
+def hook_check():
+
+    """ Determine the time of the last webhook sent to PRTG. """
+
+    # obtain the last hook we sent to prtg
+    last_message = LAST_HOOK.find_one(id=1)
+
+    # if the db is new, comparison handling becomes messy; assign a default value
+    if last_message is not None:
+        last_hook = last_message
+    else:
+        last_hook = 'false'
+
+    return last_hook
+
+
+def calc_visit():
+
+    """ Calculate total visit by users and output necessary data. """
+
+    # check prior visits, but exclude users without multiple clicks
+    clicks = DB.query("SELECT count(*) AS total, ip, visited, page FROM logged_visits GROUP BY ip HAVING total >=3 ORDER BY total DESC")
+
+    for detail in clicks:
+
+        # a record is found newer than the last prtg push
+        last_record = str(hook_check())
+
+        if last_record == 'false' or last_record > detail['visited']:
+
+            # channel and click amount to send off to prtg
+            toggle(CHANNEL_NAME, detail['total'], detail['ip'], detail['page'], 'error')
+
+def clear_db():
+
+    """ Wipe the database. """
+
+    print("Database has been purged.")
+    return PRIOR_VISIT.delete()
+
+
+if __name__ == '__main__':
+
+    # init db connection for the life of the script, as its used in numerous functions
+    DB = dataset.connect('sqlite:///' + DATABASE + '.db', row_type=stuf)
+    PRIOR_VISIT = DB['logged_visits']
+    LAST_HOOK = DB['last_hook']
+
+    PARSE = argparse.ArgumentParser(
+        prog='Alert Toggle',
+        description='Send important log activty as an alerts toggle to PRTG'
+    )
+
+    # initializes what arguments the cli accepts
+    PARSE.add_argument(
+        '-s',
+        '--start',
+        help='Start the analyzation process (passing no arguments also triggers start)',
+        action='store_true'
+    )
+    PARSE.add_argument(
+        '-c',
+        '--clear',
+        help='Purges the database',
+        action='store_true'
+    )
+    PARSE.add_argument(
+        '-w',
+        '--reset',
+        help='Resets the PRTG alarm to green',
+        action='store_true'
+    )
+
+    NAMESPACE = PARSE.parse_args()
+
+    # if no argument is passed, we default to processing analyzation
+    if NAMESPACE.clear is True:
+        clear_db()
+    elif NAMESPACE.reset is True:
+        print("Alert reset to OK")
+        toggle(CHANNEL_NAME, '0', '', '', '')
+    else:
+        analyze_log()

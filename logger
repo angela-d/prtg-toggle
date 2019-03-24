@@ -1,0 +1,103 @@
+#!/bin/bash
+
+# config
+REMOTEPATH=/var/log/httpd/access.log
+LOGCOPY=/tmp/access.log
+PAYMENTSLOG=/tmp/payments.log
+LASTSENT=~/.lastsent
+MAIL_TO=yourmail@example.com
+MAIL_FROM=youremail@example.com
+
+function utcCleanup() {
+
+  # the current.log rotates at 7pm - also force rotation of ~/.lastsent
+  HOUR=$(date -u +%H)
+
+  if [ "$HOUR" == '00' ];
+  then
+
+    echo > "$LASTSENT"
+
+    # reset the database for prtg
+    /usr/local/bin/prtg-toggle --clear
+
+  fi
+
+}
+
+function obtain() {
+
+  utcCleanup
+
+  # only obtain post & payment lines
+  cp "$REMOTEPATH" "$LOGCOPY"
+
+}
+
+
+function payment() {
+
+  # make sure log has content, otherwise we're wasting time
+  if [[ ! -s "$LOGCOPY" ]];
+  then
+
+    echo "Log is 0 bytes"
+    exit 0
+
+  fi
+
+  # extract payment posts
+  grep -P '^(?=.*POST )(?=.*payment)' "$LOGCOPY" > "$PAYMENTSLOG"
+
+
+  if [[ ! -s "$PAYMENTSLOG" ]];
+  then
+
+    echo "Payments log is 0 bytes"
+    exit 0
+
+  else
+
+    sendMail
+
+  fi
+
+}
+
+function admins() {
+
+  # we don't care about admins sending forms, so delete any line entries so we don't get alerts about it
+  sed -i '/^127.0.0.1/ d' "$PAYMENTSLOG"
+
+}
+
+function sendMail() {
+
+  # cleanup, first
+  admins
+
+  # dirty "bugfix" - copy the prev payments log and if they match, don't send anything
+  PAYSZ=$(ls -l $PAYMENTSLOG | awk '{ print $5 }')
+  SENTSZ=$(ls -l $LASTSENT | awk '{ print $5 }')
+
+
+  # compare the sizes
+  if [[ "$PAYSZ" -gt "$SENTSZ" ]];
+  then
+
+    # send an email with the log contents
+    mailx -r "$MAIL_TO" -s "Payments Log Extraction" -v "$MAIL_FROM" < "$PAYMENTSLOG"
+
+  cp "$PAYMENTSLOG" "$LASTSENT"
+
+  else
+
+    echo "Nothing new to tell you about!"
+
+  fi
+
+  exit 0
+}
+
+obtain
+payment
