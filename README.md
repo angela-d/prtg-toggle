@@ -80,17 +80,13 @@ I've included a sample [Shell script](sample-extraction.md) you can use for test
 git clone https://github.com/angela-d/prtg-toggle.git ~/prtg-toggle
 ```
 
-- Best run via cron, to make toggle accessible globally, without requiring a path, add a symbolic link (change /path/to - to the location on your server):
+- Best run via cron, to make toggle accessible globally, without requiring a path, add a symbolic link.  This will add a symlink to the home directory of the last non-sudo user that logged in; assuming you aren't running this as root (don't run as root):
 ```bash
-sudo ln -s /path/to/prtg-toggle/prtg-toggle /usr/local/bin/prtg-toggle
+sudo ln -s /home/$(last | grep "logged in" | grep -o '^\S*')/prtg-toggle/prtg-toggle /usr/local/bin/prtg-toggle
 ```
 
 ## Customizing
-By default, PRTG Toggle only processes webhooks to PRTG when the value is greater than 3; if you want to adjust this value, amend the query:
-```python
-clicks = DB.query("SELECT count(*) AS total, ip, visited, page FROM logged_visits GROUP BY ip HAVING total >=3 ORDER BY total DESC")
-```
-- Change `>=3` to whatever condition or amount you'd like to monitor.
+There are a few default configuration entries in [prtg-toggle](prtg-toggle) -- ensure you modify the options between **# start config** and **# end config** to suit your environment.
 
 ## Usage
 Setup a cron that is synced with your extraction script (runs every hour at the 40-minute mark).
