@@ -5,7 +5,8 @@
 """ Analyze a log file for specific behavior and send a webhook to PRTG to alert of such. """
 
 import argparse
-from datetime import datetime
+from datetime import datetime, timedelta
+import os
 import dataset
 from stuf import stuf
 
@@ -16,6 +17,9 @@ TOKEN = 'ABC12345-A1CC-789A-9C1A2-ABC123DEF456GH'
 LOG = '/tmp/payments.log'                # absolute path
 DATABASE = '/home/your_user/visits'      # python will create it; must be absolute
 CHANNEL_NAME = 'Threshold'               # PRTG will create it
+CLICK_PER_IP = 3                         # sum of clicks per ip to add as a condition
+CRON_FREQ = 40                           # how many minutes to search back on blank dates, since the last cron
+TIMEZONE = 'UTC'                         # timezone of the logs you'll be processing
 # end config
 
 def toggle(channel, total, ip_address, page, message):
@@ -65,15 +69,11 @@ def toggle(channel, total, ip_address, page, message):
 
 
     if response.status_code == 200:
-        if hook_check() == 'false':
+        if LAST_HOOK.find_one(id=1) is None:
             LAST_HOOK.insert(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
         else:
             LAST_HOOK.update(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
 
-    # this isn't a loop, but because it's called in one, it will continue if we don't break out
-    # of it; we only need 1 notification, since we're using this function as a toggle.
-    # we also aren't doing anything after this, so the entire process can terminate
-    exit(0)
 
 def analyze_log():
 
@@ -121,7 +121,7 @@ def compare_date(latest, current, ip_address, page_accessed):
 
     """ Assess whether or not this record has been recorded already. """
 
-    if latest == 'false' or current > latest:
+    if current > latest:
         PRIOR_VISIT.insert(dict(ip=ip_address, visited=current, page=page_accessed))
 
 
@@ -136,7 +136,9 @@ def hook_check():
     if last_message is not None:
         last_hook = last_message
     else:
-        last_hook = 'false'
+        # if we have a fresh db, assign it a default timestamp of last x mins ago, based on CRON_FREQ
+        last_hook = datetime.now() - timedelta(minutes=CRON_FREQ)
+        last_hook = datetime.strptime(str(last_hook), '%Y-%m-%d %H:%M:%S.%f').strftime('%Y-%m-%d %H:%M:%S')
 
     return last_hook
 
@@ -145,18 +147,17 @@ def calc_visit():
 
     """ Calculate total visit by users and output necessary data. """
 
-    # check prior visits, but exclude users without multiple clicks
-    clicks = DB.query("SELECT count(*) AS total, ip, visited, page FROM logged_visits GROUP BY ip HAVING total >=3 ORDER BY total DESC")
+    # see if a record is found newer than the last prtg push
+    last_record = str(hook_check())
+
+    dateend = datetime.strptime(str(datetime.now()), '%Y-%m-%d %H:%M:%S.%f').strftime('%Y-%m-%d %H:%M:%S')
+    clicks = DB.query('SELECT count(*) AS total, ip, visited, page FROM logged_visits WHERE visited BETWEEN :datestart AND :dateend GROUP BY ip HAVING total >= :clicks ORDER BY total DESC LIMIT 1', datestart=last_record, dateend=dateend, clicks=CLICK_PER_IP)
 
     for detail in clicks:
 
-        # a record is found newer than the last prtg push
-        last_record = str(hook_check())
+        # channel and click amount to send off to prtg
+        toggle(CHANNEL_NAME, detail['total'], detail['ip'], detail['page'], 'error')
 
-        if last_record == 'false' or last_record > detail['visited']:
-
-            # channel and click amount to send off to prtg
-            toggle(CHANNEL_NAME, detail['total'], detail['ip'], detail['page'], 'error')
 
 def clear_db():
 
@@ -168,6 +169,9 @@ def clear_db():
 
 if __name__ == '__main__':
 
+    # set the timezone so logs are processed by toggle accurately if ran remotely
+    os.environ['TZ'] = TIMEZONE
+
     # init db connection for the life of the script, as its used in numerous functions
     DB = dataset.connect('sqlite:///' + DATABASE + '.db', row_type=stuf)
     PRIOR_VISIT = DB['logged_visits']
@@ -177,7 +181,6 @@ if __name__ == '__main__':
         prog='Alert Toggle',
         description='Send important log activty as an alerts toggle to PRTG'
     )
-
     # initializes what arguments the cli accepts
     PARSE.add_argument(
         '-s',
