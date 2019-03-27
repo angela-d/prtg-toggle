@@ -121,7 +121,7 @@ def compare_date(latest, current, ip_address, page_accessed):
 
     """ Assess whether or not this record has been recorded already. """
 
-    if current > latest:
+    if latest == 'false' or current > latest:
         PRIOR_VISIT.insert(dict(ip=ip_address, visited=current, page=page_accessed))
 
 
