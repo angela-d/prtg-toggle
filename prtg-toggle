@@ -72,7 +72,7 @@ def toggle(channel, total, ip_address, page, message):
         if LAST_HOOK.find_one(id=1) is None:
             LAST_HOOK.insert(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
         else:
-            LAST_HOOK.update(dict(sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['sent'])
+            LAST_HOOK.update(dict(id=1, sent=datetime.now().strftime("%Y-%m-%d %H:%M:%S")), ['id'], ['sent'])
 
 
 def analyze_log():
@@ -134,7 +134,7 @@ def hook_check():
 
     # if the db is new, comparison handling becomes messy; assign a default value
     if last_message is not None:
-        last_hook = last_message
+        last_hook = last_message['sent']
     else:
         # if we have a fresh db, assign it a default timestamp of last x mins ago, based on CRON_FREQ
         last_hook = datetime.now() - timedelta(minutes=CRON_FREQ)
